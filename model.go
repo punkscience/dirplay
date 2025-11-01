@@ -22,6 +22,8 @@ type PlayerModel struct {
 	width         int
 	height        int
 	err           error
+	artist        string
+	title         string
 }
 
 // Messages for the TUI
@@ -31,6 +33,8 @@ type trackEndedMsg struct{}
 type playErrorMsg error
 type trackLoadedMsg struct {
 	duration time.Duration
+	artist   string
+	title    string
 }
 
 // NewPlayerModel creates a new player model
@@ -120,7 +124,9 @@ func (m *PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.paused = false
 		m.position = 0
 		m.duration = msg.duration
-		return m, nil
+		m.artist = msg.artist
+		m.title = msg.title
+		return m, m.tickCmd()
 
 	case playErrorMsg:
 		m.err = error(msg)
@@ -143,12 +149,18 @@ func (m *PlayerModel) View() string {
 		return "No tracks in playlist\nPress 'q' or 'esc' to quit"
 	}
 
-	// Get current track name
-	currentTrack := filepath.Base(m.playlist[m.currentIndex])
-	
-	// Remove extension from filename for cleaner display
-	if ext := filepath.Ext(currentTrack); ext != "" {
-		currentTrack = strings.TrimSuffix(currentTrack, ext)
+	// Determine track display
+	var trackDisplay string
+	if m.title != "" && m.artist != "" {
+		trackDisplay = fmt.Sprintf("%s - %s", m.artist, m.title)
+	} else if m.title != "" {
+		trackDisplay = m.title
+	} else {
+		// Fallback to filename
+		trackDisplay = filepath.Base(m.playlist[m.currentIndex])
+		if ext := filepath.Ext(trackDisplay); ext != "" {
+			trackDisplay = strings.TrimSuffix(trackDisplay, ext)
+		}
 	}
 
 	// Create styles
@@ -180,7 +192,7 @@ func (m *PlayerModel) View() string {
 	content.WriteString("\n\n")
 
 	// Current track
-	content.WriteString(trackStyle.Render(fmt.Sprintf("Playing: %s", currentTrack)))
+	content.WriteString(trackStyle.Render(fmt.Sprintf("Playing: %s", trackDisplay)))
 	content.WriteString("\n")
 
 	// Track info
@@ -262,7 +274,11 @@ func (m *PlayerModel) loadCurrentTrack() tea.Cmd {
 			return playErrorMsg(fmt.Errorf("failed to play track: %w", err))
 		}
 
-		return trackLoadedMsg{duration: m.player.GetDuration()}
+		return trackLoadedMsg{
+			duration: m.player.GetDuration(),
+			artist:   m.player.GetArtist(),
+			title:    m.player.GetTitle(),
+		}
 	}
 }
 
