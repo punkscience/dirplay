@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dhowden/tag"
 	"github.com/gopxl/beep"
 	"github.com/gopxl/beep/flac"
 	"github.com/gopxl/beep/mp3"
@@ -28,6 +29,8 @@ type AudioPlayer struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	positionCh  chan time.Duration
+	artist      string
+	title       string
 }
 
 // NewAudioPlayer creates a new audio player instance
@@ -52,6 +55,22 @@ func (ap *AudioPlayer) LoadTrack(filePath string) error {
 	}
 
 	ap.file = file
+
+	// Read metadata tags
+	tags, err := tag.ReadFrom(file)
+	if err == nil {
+		ap.artist = tags.Artist()
+		ap.title = tags.Title()
+	} else {
+		// Fallback to filename if no tags
+		ap.title = filepath.Base(filePath)
+		ap.artist = "Unknown Artist"
+	}
+
+	// Reset file pointer for audio decoding
+	if _, err := file.Seek(0, 0); err != nil {
+		return fmt.Errorf("failed to seek file: %w", err)
+	}
 
 	// Decode based on file extension
 	ext := strings.ToLower(filepath.Ext(filePath))
@@ -243,4 +262,14 @@ func (ap *AudioPlayer) trackPosition() {
 // IsPlaying returns true if audio is currently playing
 func (ap *AudioPlayer) IsPlaying() bool {
 	return ap.playing && !ap.IsPaused()
+}
+
+// GetArtist returns the artist of the current track
+func (ap *AudioPlayer) GetArtist() string {
+	return ap.artist
+}
+
+// GetTitle returns the title of the current track
+func (ap *AudioPlayer) GetTitle() string {
+	return ap.title
 }
