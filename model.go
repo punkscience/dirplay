@@ -126,7 +126,7 @@ func (m *PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.duration = msg.duration
 		m.artist = msg.artist
 		m.title = msg.title
-		return m, m.tickCmd()
+		return m, nil
 
 	case playErrorMsg:
 		m.err = error(msg)
