@@ -48,6 +48,9 @@ func (ap *AudioPlayer) LoadTrack(filePath string) error {
 	// Close previous track if any
 	ap.Close()
 
+	// Create a new context for this track
+	ap.ctx, ap.cancel = context.WithCancel(context.Background())
+
 	// Open the audio file
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -170,23 +173,32 @@ func (ap *AudioPlayer) Stop() {
 	if ap.playing {
 		speaker.Clear()
 		ap.playing = false
+		ap.currentPos = 0
+		if ap.cancel != nil {
+			ap.cancel() // Stop the goroutine
+		}
 	}
 }
 
 // Close closes the audio player and releases resources
 func (ap *AudioPlayer) Close() {
 	ap.Stop()
-	
+
+	if ap.cancel != nil {
+		ap.cancel()
+		ap.cancel = nil
+	}
+
 	if ap.streamer != nil {
 		ap.streamer.Close()
 		ap.streamer = nil
 	}
-	
+
 	if ap.file != nil {
 		ap.file.Close()
 		ap.file = nil
 	}
-	
+
 	ap.ctrl = nil
 }
 
