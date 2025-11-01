@@ -29,6 +29,9 @@ type tickMsg time.Time
 type positionMsg time.Duration
 type trackEndedMsg struct{}
 type playErrorMsg error
+type trackLoadedMsg struct {
+	duration time.Duration
+}
 
 // NewPlayerModel creates a new player model
 func NewPlayerModel(playlist []string) *PlayerModel {
@@ -75,24 +78,49 @@ func (m *PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "left":
 			// Previous track
-			return m, m.previousTrack()
+			m.player.Stop()
+			m.currentIndex--
+			if m.currentIndex < 0 {
+				m.currentIndex = len(m.playlist) - 1 // Loop to last track
+			}
+			return m, m.loadCurrentTrack()
 
 		case "right":
 			// Next track
-			return m, m.nextTrack()
+			m.player.Stop()
+			m.currentIndex++
+			if m.currentIndex >= len(m.playlist) {
+				m.currentIndex = 0 // Loop back to first track
+			}
+			return m, m.loadCurrentTrack()
 		}
 
 	case tickMsg:
 		// Get current position from player
 		m.position = m.player.GetPosition()
-		m.duration = m.player.GetDuration()
-		
+
 		// Check if track ended
 		if m.playing && m.position >= m.duration && m.duration > 0 {
-			return m, m.nextTrack()
+			return m, func() tea.Msg {
+				return trackEndedMsg{}
+			}
 		}
-		
+
 		return m, m.tickCmd()
+
+	case trackEndedMsg:
+		m.currentIndex++
+		if m.currentIndex >= len(m.playlist) {
+			m.currentIndex = 0 // Loop back to the first track
+		}
+		return m, m.loadCurrentTrack()
+
+	case trackLoadedMsg:
+		m.playing = true
+		m.paused = false
+		m.position = 0
+		m.duration = msg.duration
+		return m, nil
 
 	case playErrorMsg:
 		m.err = error(msg)
@@ -234,38 +262,7 @@ func (m *PlayerModel) loadCurrentTrack() tea.Cmd {
 			return playErrorMsg(fmt.Errorf("failed to play track: %w", err))
 		}
 
-		m.playing = true
-		m.paused = false
-
-		return nil
-	}
-}
-
-// nextTrack moves to the next track
-func (m *PlayerModel) nextTrack() tea.Cmd {
-	return func() tea.Msg {
-		m.player.Stop()
-		
-		m.currentIndex++
-		if m.currentIndex >= len(m.playlist) {
-			m.currentIndex = 0 // Loop back to first track
-		}
-		
-		return m.loadCurrentTrack()()
-	}
-}
-
-// previousTrack moves to the previous track
-func (m *PlayerModel) previousTrack() tea.Cmd {
-	return func() tea.Msg {
-		m.player.Stop()
-		
-		m.currentIndex--
-		if m.currentIndex < 0 {
-			m.currentIndex = len(m.playlist) - 1 // Loop to last track
-		}
-		
-		return m.loadCurrentTrack()()
+		return trackLoadedMsg{duration: m.player.GetDuration()}
 	}
 }
 
