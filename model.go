@@ -12,18 +12,18 @@ import (
 
 // PlayerModel represents the state of the music player TUI
 type PlayerModel struct {
-	playlist      []string
-	currentIndex  int
-	player        *AudioPlayer
-	playing       bool
-	paused        bool
-	position      time.Duration
-	duration      time.Duration
-	width         int
-	height        int
-	err           error
-	artist        string
-	title         string
+	playlist     []string
+	currentIndex int
+	player       *AudioPlayer
+	playing      bool
+	paused       bool
+	position     time.Duration
+	duration     time.Duration
+	width        int
+	height       int
+	err          error
+	artist       string
+	title        string
 }
 
 // Messages for the TUI
@@ -103,14 +103,23 @@ func (m *PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Get current position from player
 		m.position = m.player.GetPosition()
 
-		// Check if track ended
-		if m.playing && m.position >= m.duration && m.duration > 0 {
+		// Check if track ended using the new HasEnded method
+		if m.playing && m.player.HasEnded() {
 			return m, func() tea.Msg {
 				return trackEndedMsg{}
 			}
 		}
 
-		return m, m.tickCmd()
+		// Check for position updates from the audio player
+		var positionCmd tea.Cmd
+		select {
+		case pos := <-m.player.GetPositionChan():
+			m.position = pos
+		default:
+			// No position update available
+		}
+
+		return m, tea.Batch(m.tickCmd(), positionCmd)
 
 	case trackEndedMsg:
 		m.currentIndex++
@@ -186,7 +195,7 @@ func (m *PlayerModel) View() string {
 
 	// Build the UI
 	var content strings.Builder
-	
+
 	// Title
 	content.WriteString(titleStyle.Render("♪ dirplay"))
 	content.WriteString("\n\n")
@@ -239,7 +248,7 @@ func (m *PlayerModel) renderProgressBar(width int) string {
 
 	progress := float64(m.position) / float64(m.duration)
 	filled := int(progress * float64(width))
-	
+
 	if filled > width {
 		filled = width
 	}
@@ -263,7 +272,7 @@ func (m *PlayerModel) loadCurrentTrack() tea.Cmd {
 		}
 
 		track := m.playlist[m.currentIndex]
-		
+
 		// Load the track
 		if err := m.player.LoadTrack(track); err != nil {
 			return playErrorMsg(fmt.Errorf("failed to load track: %w", err))

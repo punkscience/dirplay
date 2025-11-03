@@ -106,7 +106,6 @@ func (ap *AudioPlayer) LoadTrack(filePath string) error {
 	ap.currentPos = 0
 
 	// Initialize speaker if not already done
-	// Buffer size increased from 100ms to 250ms for smoother playback
 	if err := speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/2)); err != nil {
 		// Speaker might already be initialized, which is fine
 	}
@@ -241,14 +240,20 @@ func (ap *AudioPlayer) trackPosition() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
+	startTime := time.Now()
+	lastUpdateTime := startTime
+
 	for {
 		select {
 		case <-ap.ctx.Done():
 			return
 		case <-ticker.C:
 			if ap.playing && ap.ctrl != nil && !ap.IsPaused() {
-				// Update position based on time elapsed
-				ap.currentPos += 100 * time.Millisecond
+				// Calculate position based on actual elapsed time
+				now := time.Now()
+				elapsed := now.Sub(lastUpdateTime)
+				ap.currentPos += elapsed
+				lastUpdateTime = now
 
 				// Don't exceed duration
 				if ap.currentPos > ap.duration {
@@ -267,6 +272,9 @@ func (ap *AudioPlayer) trackPosition() {
 					ap.playing = false
 					return
 				}
+			} else {
+				// If paused or not playing, update the last update time
+				lastUpdateTime = time.Now()
 			}
 		}
 	}
@@ -285,4 +293,9 @@ func (ap *AudioPlayer) GetArtist() string {
 // GetTitle returns the title of the current track
 func (ap *AudioPlayer) GetTitle() string {
 	return ap.title
+}
+
+// HasEnded returns true if the current track has finished playing
+func (ap *AudioPlayer) HasEnded() bool {
+	return ap.currentPos >= ap.duration && ap.duration > 0 && !ap.playing
 }
