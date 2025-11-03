@@ -19,18 +19,18 @@ import (
 
 // AudioPlayer manages audio playback
 type AudioPlayer struct {
-	streamer    beep.StreamSeekCloser
-	ctrl        *beep.Ctrl
-	format      beep.Format
-	playing     bool
-	file        *os.File
-	duration    time.Duration
-	currentPos  time.Duration
-	ctx         context.Context
-	cancel      context.CancelFunc
-	positionCh  chan time.Duration
-	artist      string
-	title       string
+	streamer   beep.StreamSeekCloser
+	ctrl       *beep.Ctrl
+	format     beep.Format
+	playing    bool
+	file       *os.File
+	duration   time.Duration
+	currentPos time.Duration
+	ctx        context.Context
+	cancel     context.CancelFunc
+	positionCh chan time.Duration
+	artist     string
+	title      string
 }
 
 // NewAudioPlayer creates a new audio player instance
@@ -100,13 +100,14 @@ func (ap *AudioPlayer) LoadTrack(filePath string) error {
 
 	ap.streamer = streamer
 	ap.format = format
-	
+
 	// Calculate duration
 	ap.duration = format.SampleRate.D(streamer.Len())
 	ap.currentPos = 0
 
 	// Initialize speaker if not already done
-	if err := speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10)); err != nil {
+	// Buffer size increased from 100ms to 250ms for smoother playback
+	if err := speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/2)); err != nil {
 		// Speaker might already be initialized, which is fine
 	}
 
@@ -225,7 +226,7 @@ func (ap *AudioPlayer) Seek(pos time.Duration) error {
 
 	// Convert time to sample position
 	samples := ap.format.SampleRate.N(pos)
-	
+
 	// Seek to position
 	if err := ap.streamer.Seek(samples); err != nil {
 		return fmt.Errorf("failed to seek: %w", err)
@@ -248,7 +249,7 @@ func (ap *AudioPlayer) trackPosition() {
 			if ap.playing && ap.ctrl != nil && !ap.IsPaused() {
 				// Update position based on time elapsed
 				ap.currentPos += 100 * time.Millisecond
-				
+
 				// Don't exceed duration
 				if ap.currentPos > ap.duration {
 					ap.currentPos = ap.duration
