@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +18,7 @@ func main() {
 	}
 
 	musicDir := os.Args[1]
-	
+
 	// Verify the directory exists
 	if _, err := os.Stat(musicDir); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "Directory does not exist: %s\n", musicDir)
@@ -29,7 +28,8 @@ func main() {
 	// Scan directory for audio files
 	playlist, err := scanMusicDirectory(musicDir)
 	if err != nil {
-		log.Fatalf("Error scanning directory: %v", err)
+		fmt.Fprintf(os.Stderr, "Error scanning directory: %v\n", err)
+		os.Exit(1)
 	}
 
 	if len(playlist) == 0 {
@@ -45,14 +45,15 @@ func main() {
 	program := tea.NewProgram(model, tea.WithAltScreen())
 
 	if _, err := program.Run(); err != nil {
-		log.Fatalf("Error running TUI: %v", err)
+		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+		os.Exit(1)
 	}
 }
 
 // scanMusicDirectory recursively scans a directory for audio files
 func scanMusicDirectory(root string) ([]string, error) {
 	var playlist []string
-	
+
 	// Supported audio file extensions
 	audioExts := map[string]bool{
 		".mp3":  true,

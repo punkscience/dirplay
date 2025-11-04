@@ -100,7 +100,7 @@ func (m *PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
-		// Get current position from player
+		// Get current position from player directly
 		m.position = m.player.GetPosition()
 
 		// Check if track ended using the new HasEnded method
@@ -110,18 +110,10 @@ func (m *PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Check for position updates from the audio player
-		var positionCmd tea.Cmd
-		select {
-		case pos := <-m.player.GetPositionChan():
-			m.position = pos
-		default:
-			// No position update available
-		}
-
-		return m, tea.Batch(m.tickCmd(), positionCmd)
+		return m, m.tickCmd()
 
 	case trackEndedMsg:
+		m.player.Stop()
 		m.currentIndex++
 		if m.currentIndex >= len(m.playlist) {
 			m.currentIndex = 0 // Loop back to the first track
@@ -135,7 +127,8 @@ func (m *PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.duration = msg.duration
 		m.artist = msg.artist
 		m.title = msg.title
-		return m, nil
+		// Restart the tick cycle for position updates
+		return m, m.tickCmd()
 
 	case playErrorMsg:
 		m.err = error(msg)

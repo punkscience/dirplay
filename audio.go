@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,39 +16,77 @@ import (
 	"github.com/gopxl/beep/wav"
 )
 
+// CompletionStreamer wraps a streamer to detect when it completes
+type CompletionStreamer struct {
+	beep.Streamer
+	completed bool
+}
+
+func (cs *CompletionStreamer) Stream(samples [][2]float64) (n int, ok bool) {
+	n, ok = cs.Streamer.Stream(samples)
+	if !ok {
+		cs.completed = true
+	}
+	return n, ok
+}
+
+func (cs *CompletionStreamer) Err() error {
+	if s, ok := cs.Streamer.(interface{ Err() error }); ok {
+		return s.Err()
+	}
+	return nil
+}
+
+func (cs *CompletionStreamer) IsCompleted() bool {
+	return cs.completed
+}
+
 // AudioPlayer manages audio playback
 type AudioPlayer struct {
-	streamer   beep.StreamSeekCloser
-	ctrl       *beep.Ctrl
-	format     beep.Format
-	playing    bool
-	file       *os.File
-	duration   time.Duration
-	currentPos time.Duration
-	ctx        context.Context
-	cancel     context.CancelFunc
-	positionCh chan time.Duration
-	artist     string
-	title      string
+	streamer         beep.StreamSeekCloser
+	ctrl             *beep.Ctrl
+	format           beep.Format
+	playing          bool
+	file             *os.File
+	duration         time.Duration
+	currentPos       time.Duration
+	artist           string
+	title            string
+	startTime        time.Time
+	hasEnded         bool
+	completionStream *CompletionStreamer
 }
 
 // NewAudioPlayer creates a new audio player instance
 func NewAudioPlayer() *AudioPlayer {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &AudioPlayer{
-		ctx:        ctx,
-		cancel:     cancel,
-		positionCh: make(chan time.Duration, 1),
-	}
+	return &AudioPlayer{}
 }
 
-// LoadTrack loads an audio file for playback
+// LoadTrack loads an audio file for playbook
 func (ap *AudioPlayer) LoadTrack(filePath string) error {
-	// Close previous track if any
-	ap.Close()
+	// Stop any current playback and reset state
+	ap.playing = false
+	ap.currentPos = 0
+	ap.hasEnded = false
 
-	// Create a new context for this track
-	ap.ctx, ap.cancel = context.WithCancel(context.Background())
+	// Clear speaker and close old resources - be more thorough
+	speaker.Clear()
+
+	// Wait for speaker to fully clear
+	time.Sleep(20 * time.Millisecond)
+
+	if ap.streamer != nil {
+		ap.streamer.Close()
+		ap.streamer = nil
+	}
+
+	if ap.file != nil {
+		ap.file.Close()
+		ap.file = nil
+	}
+
+	// Clear speaker again to be absolutely sure
+	speaker.Clear()
 
 	// Open the audio file
 	file, err := os.Open(filePath)
@@ -102,7 +139,8 @@ func (ap *AudioPlayer) LoadTrack(filePath string) error {
 	ap.format = format
 
 	// Calculate duration
-	ap.duration = format.SampleRate.D(streamer.Len())
+	streamLen := streamer.Len()
+	ap.duration = format.SampleRate.D(streamLen)
 	ap.currentPos = 0
 
 	// Initialize speaker if not already done
@@ -123,14 +161,24 @@ func (ap *AudioPlayer) Play() error {
 		return nil // Already playing
 	}
 
+	// Ensure speaker is clear before we start
+	speaker.Clear()
+	time.Sleep(5 * time.Millisecond)
+
+	// Create completion detector wrapper
+	ap.completionStream = &CompletionStreamer{
+		Streamer: ap.streamer,
+	}
+
 	// Create control wrapper for pause/resume functionality
 	ap.ctrl = &beep.Ctrl{
-		Streamer: ap.streamer,
+		Streamer: ap.completionStream,
 		Paused:   false,
 	}
 
-	// Start position tracking
-	go ap.trackPosition()
+	// Record start time for position tracking and reset position
+	ap.startTime = time.Now()
+	ap.currentPos = 0
 
 	// Start playback
 	speaker.Play(ap.ctrl)
@@ -171,11 +219,18 @@ func (ap *AudioPlayer) IsPaused() bool {
 // Stop stops playback
 func (ap *AudioPlayer) Stop() {
 	if ap.playing {
+		// First clear the speaker to stop any audio
 		speaker.Clear()
+
+		// Wait a moment for speaker to actually clear
+		time.Sleep(10 * time.Millisecond)
+
 		ap.playing = false
-		ap.currentPos = 0
-		if ap.cancel != nil {
-			ap.cancel() // Stop the goroutine
+		ap.hasEnded = false
+
+		// Update currentPos to where we stopped
+		if !ap.IsPaused() {
+			ap.currentPos = ap.GetPosition()
 		}
 	}
 }
@@ -183,11 +238,6 @@ func (ap *AudioPlayer) Stop() {
 // Close closes the audio player and releases resources
 func (ap *AudioPlayer) Close() {
 	ap.Stop()
-
-	if ap.cancel != nil {
-		ap.cancel()
-		ap.cancel = nil
-	}
 
 	if ap.streamer != nil {
 		ap.streamer.Close()
@@ -202,6 +252,11 @@ func (ap *AudioPlayer) Close() {
 	ap.ctrl = nil
 }
 
+// Shutdown completely shuts down the audio player
+func (ap *AudioPlayer) Shutdown() {
+	ap.Close()
+}
+
 // GetDuration returns the total duration of the current track
 func (ap *AudioPlayer) GetDuration() time.Duration {
 	return ap.duration
@@ -209,12 +264,20 @@ func (ap *AudioPlayer) GetDuration() time.Duration {
 
 // GetPosition returns the current playback position
 func (ap *AudioPlayer) GetPosition() time.Duration {
-	return ap.currentPos
-}
+	if !ap.playing || ap.IsPaused() {
+		return ap.currentPos
+	}
 
-// GetPositionChan returns a channel that receives position updates
-func (ap *AudioPlayer) GetPositionChan() <-chan time.Duration {
-	return ap.positionCh
+	// Calculate position based on elapsed time since start
+	elapsed := time.Since(ap.startTime)
+	pos := ap.currentPos + elapsed
+
+	// Don't exceed duration
+	if pos > ap.duration {
+		pos = ap.duration
+	}
+
+	return pos
 }
 
 // Seek seeks to a specific position in the track
@@ -235,51 +298,6 @@ func (ap *AudioPlayer) Seek(pos time.Duration) error {
 	return nil
 }
 
-// trackPosition tracks the current playback position
-func (ap *AudioPlayer) trackPosition() {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	startTime := time.Now()
-	lastUpdateTime := startTime
-
-	for {
-		select {
-		case <-ap.ctx.Done():
-			return
-		case <-ticker.C:
-			if ap.playing && ap.ctrl != nil && !ap.IsPaused() {
-				// Calculate position based on actual elapsed time
-				now := time.Now()
-				elapsed := now.Sub(lastUpdateTime)
-				ap.currentPos += elapsed
-				lastUpdateTime = now
-
-				// Don't exceed duration
-				if ap.currentPos > ap.duration {
-					ap.currentPos = ap.duration
-				}
-
-				// Send position update
-				select {
-				case ap.positionCh <- ap.currentPos:
-				default:
-					// Channel full, skip this update
-				}
-
-				// Check if track finished
-				if ap.currentPos >= ap.duration {
-					ap.playing = false
-					return
-				}
-			} else {
-				// If paused or not playing, update the last update time
-				lastUpdateTime = time.Now()
-			}
-		}
-	}
-}
-
 // IsPlaying returns true if audio is currently playing
 func (ap *AudioPlayer) IsPlaying() bool {
 	return ap.playing && !ap.IsPaused()
@@ -297,5 +315,23 @@ func (ap *AudioPlayer) GetTitle() string {
 
 // HasEnded returns true if the current track has finished playing
 func (ap *AudioPlayer) HasEnded() bool {
-	return ap.currentPos >= ap.duration && ap.duration > 0 && !ap.playing
+	if ap.duration == 0 || !ap.playing {
+		return false
+	}
+
+	// First check if our completion streamer detected the end
+	if ap.completionStream != nil && ap.completionStream.IsCompleted() {
+		ap.hasEnded = true
+		return true
+	}
+
+	// Also check if position has reached the end (fallback)
+	currentPos := ap.GetPosition()
+
+	if currentPos >= ap.duration {
+		ap.hasEnded = true
+		return true
+	}
+
+	return ap.hasEnded
 }
