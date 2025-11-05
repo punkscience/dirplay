@@ -41,21 +41,22 @@ func (cs *CompletionStreamer) IsCompleted() bool {
 	return cs.completed
 }
 
-// AudioPlayer manages audio playbook
+// AudioPlayer manages audio playback
 type AudioPlayer struct {
-	streamer         beep.StreamSeekCloser
-	ctrl             *beep.Ctrl
-	format           beep.Format
-	playing          bool
-	file             *os.File
-	duration         time.Duration
-	currentPos       time.Duration
-	artist           string
-	title            string
-	album            string
-	startTime        time.Time
-	hasEnded         bool
-	completionStream *CompletionStreamer
+	streamer           beep.StreamSeekCloser
+	ctrl               *beep.Ctrl
+	format             beep.Format
+	playing            bool
+	file               *os.File
+	duration           time.Duration
+	currentPos         time.Duration
+	artist             string
+	title              string
+	album              string
+	startTime          time.Time
+	hasEnded           bool
+	completionStream   *CompletionStreamer
+	speakerInitialized bool
 }
 
 // NewAudioPlayer creates a new audio player instance
@@ -63,31 +64,13 @@ func NewAudioPlayer() *AudioPlayer {
 	return &AudioPlayer{}
 }
 
-// LoadTrack loads an audio file for playbook
+// LoadTrack loads an audio file for playback
 func (ap *AudioPlayer) LoadTrack(filePath string) error {
 	// Stop any current playback and reset state
-	ap.playing = false
-	ap.currentPos = 0
-	ap.hasEnded = false
+	ap.Stop()
 
-	// Clear speaker and close old resources - be more thorough
-	speaker.Clear()
-
-	// Wait for speaker to fully clear
-	time.Sleep(20 * time.Millisecond)
-
-	if ap.streamer != nil {
-		ap.streamer.Close()
-		ap.streamer = nil
-	}
-
-	if ap.file != nil {
-		ap.file.Close()
-		ap.file = nil
-	}
-
-	// Clear speaker again to be absolutely sure
-	speaker.Clear()
+	// Wait a moment for resources to be fully released
+	time.Sleep(50 * time.Millisecond)
 
 	// Open the audio file
 	file, err := os.Open(filePath)
@@ -146,9 +129,12 @@ func (ap *AudioPlayer) LoadTrack(filePath string) error {
 	ap.duration = format.SampleRate.D(streamLen)
 	ap.currentPos = 0
 
-	// Initialize speaker if not already done
-	if err := speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/2)); err != nil {
-		// Speaker might already be initialized, which is fine
+	// Initialize speaker only once per application lifecycle
+	if !ap.speakerInitialized {
+		if err := speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10)); err != nil {
+			return fmt.Errorf("failed to initialize speaker: %w", err)
+		}
+		ap.speakerInitialized = true
 	}
 
 	return nil
@@ -164,9 +150,11 @@ func (ap *AudioPlayer) Play() error {
 		return nil // Already playing
 	}
 
-	// Ensure speaker is clear before we start
+	// Clear any existing audio from speaker
 	speaker.Clear()
-	time.Sleep(5 * time.Millisecond)
+
+	// Give speaker time to fully clear
+	time.Sleep(10 * time.Millisecond)
 
 	// Create completion detector wrapper
 	ap.completionStream = &CompletionStreamer{
@@ -222,26 +210,22 @@ func (ap *AudioPlayer) IsPaused() bool {
 // Stop stops playback
 func (ap *AudioPlayer) Stop() {
 	if ap.playing {
-		// First clear the speaker to stop any audio
+		// Clear the speaker to stop any audio
 		speaker.Clear()
 
-		// Wait a moment for speaker to actually clear
-		time.Sleep(10 * time.Millisecond)
+		// Wait for speaker to fully stop
+		time.Sleep(20 * time.Millisecond)
 
 		ap.playing = false
 		ap.hasEnded = false
 
 		// Update currentPos to where we stopped
-		if !ap.IsPaused() {
+		if ap.ctrl != nil && !ap.ctrl.Paused {
 			ap.currentPos = ap.GetPosition()
 		}
 	}
-}
 
-// Close closes the audio player and releases resources
-func (ap *AudioPlayer) Close() {
-	ap.Stop()
-
+	// Clean up resources
 	if ap.streamer != nil {
 		ap.streamer.Close()
 		ap.streamer = nil
@@ -252,7 +236,20 @@ func (ap *AudioPlayer) Close() {
 		ap.file = nil
 	}
 
+	// Clear references to prevent accumulation
 	ap.ctrl = nil
+	ap.completionStream = nil
+}
+
+// Close closes the audio player and releases resources
+func (ap *AudioPlayer) Close() {
+	ap.Stop()
+
+	// Final cleanup - clear speaker one last time
+	speaker.Clear()
+
+	// Reset speaker initialization flag if needed for restart
+	ap.speakerInitialized = false
 }
 
 // Shutdown completely shuts down the audio player

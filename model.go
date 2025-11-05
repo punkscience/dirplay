@@ -26,6 +26,7 @@ type PlayerModel struct {
 	artist       string
 	title        string
 	album        string
+	tickInterval time.Duration
 }
 
 // Messages for the TUI
@@ -50,6 +51,7 @@ func NewPlayerModel(playlist []string) *PlayerModel {
 		playlist:     playlist,
 		currentIndex: 0,
 		player:       NewAudioPlayer(),
+		tickInterval: 100 * time.Millisecond, // Make tick interval configurable
 	}
 }
 
@@ -81,9 +83,12 @@ func (m *PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.paused {
 					m.player.Resume()
 					m.paused = false
+					// Restart ticking when resuming
+					return m, m.tickCmd()
 				} else {
 					m.player.Pause()
 					m.paused = true
+					// Stop ticking when paused (handled by tickMsg case)
 				}
 			}
 
@@ -123,7 +128,12 @@ func (m *PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		return m, m.tickCmd()
+		// Only continue ticking if we're actually playing
+		if m.playing && !m.paused {
+			return m, m.tickCmd()
+		}
+
+		return m, nil
 
 	case trackEndedMsg:
 		m.player.Stop()
@@ -271,7 +281,7 @@ func (m *PlayerModel) renderProgressBar(width int) string {
 
 // tickCmd returns a command to send tick messages
 func (m *PlayerModel) tickCmd() tea.Cmd {
-	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(m.tickInterval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
