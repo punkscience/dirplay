@@ -41,7 +41,7 @@ func (cs *CompletionStreamer) IsCompleted() bool {
 	return cs.completed
 }
 
-// AudioPlayer manages audio playback
+// AudioPlayer manages audio playbook
 type AudioPlayer struct {
 	streamer         beep.StreamSeekCloser
 	ctrl             *beep.Ctrl
@@ -52,6 +52,7 @@ type AudioPlayer struct {
 	currentPos       time.Duration
 	artist           string
 	title            string
+	album            string
 	startTime        time.Time
 	hasEnded         bool
 	completionStream *CompletionStreamer
@@ -101,10 +102,12 @@ func (ap *AudioPlayer) LoadTrack(filePath string) error {
 	if err == nil {
 		ap.artist = tags.Artist()
 		ap.title = tags.Title()
+		ap.album = tags.Album()
 	} else {
 		// Fallback to filename if no tags
 		ap.title = filepath.Base(filePath)
 		ap.artist = "Unknown Artist"
+		ap.album = "Unknown Album"
 	}
 
 	// Reset file pointer for audio decoding
@@ -311,6 +314,11 @@ func (ap *AudioPlayer) GetArtist() string {
 // GetTitle returns the title of the current track
 func (ap *AudioPlayer) GetTitle() string {
 	return ap.title
+}
+
+// GetAlbum returns the album of the current track
+func (ap *AudioPlayer) GetAlbum() string {
+	return ap.album
 }
 
 // HasEnded returns true if the current track has finished playing

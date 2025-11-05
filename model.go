@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ type PlayerModel struct {
 	err          error
 	artist       string
 	title        string
+	album        string
 }
 
 // Messages for the TUI
@@ -35,6 +37,11 @@ type trackLoadedMsg struct {
 	duration time.Duration
 	artist   string
 	title    string
+	album    string
+}
+type noteSavedMsg struct {
+	success bool
+	error   string
 }
 
 // NewPlayerModel creates a new player model
@@ -97,6 +104,12 @@ func (m *PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentIndex = 0 // Loop back to first track
 			}
 			return m, m.loadCurrentTrack()
+
+		case "n":
+			// Save current track to notes
+			if m.playing {
+				return m, m.saveTrackNote()
+			}
 		}
 
 	case tickMsg:
@@ -127,8 +140,14 @@ func (m *PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.duration = msg.duration
 		m.artist = msg.artist
 		m.title = msg.title
+		m.album = msg.album
 		// Restart the tick cycle for position updates
 		return m, m.tickCmd()
+
+	case noteSavedMsg:
+		// Handle note saving feedback (could show a brief message)
+		// For now, we'll just ignore it as the save happens silently
+		return m, nil
 
 	case playErrorMsg:
 		m.err = error(msg)
@@ -227,7 +246,7 @@ func (m *PlayerModel) View() string {
 	content.WriteString("\n")
 
 	// Controls
-	controls := "Controls: [←] Previous  [→] Next  [SPACE] Pause/Play  [ESC] Quit"
+	controls := "Controls: [←] Previous  [→] Next  [SPACE] Pause/Play  [N] Note  [ESC] Quit"
 	content.WriteString(controlsStyle.Render(controls))
 
 	return content.String()
@@ -280,7 +299,57 @@ func (m *PlayerModel) loadCurrentTrack() tea.Cmd {
 			duration: m.player.GetDuration(),
 			artist:   m.player.GetArtist(),
 			title:    m.player.GetTitle(),
+			album:    m.player.GetAlbum(),
 		}
+	}
+}
+
+// saveTrackNote saves the current track information to track-notes.md
+func (m *PlayerModel) saveTrackNote() tea.Cmd {
+	return func() tea.Msg {
+		// Get user's home directory
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return noteSavedMsg{success: false, error: "Could not find home directory"}
+		}
+
+		notesFile := filepath.Join(homeDir, "track-notes.md")
+
+		// Create the note entry in the format: [ ] Artist - Album - Track
+		noteEntry := fmt.Sprintf("[ ] %s - %s - %s\n", m.artist, m.album, m.title)
+
+		// Check if file exists
+		_, err = os.Stat(notesFile)
+		fileExists := !os.IsNotExist(err)
+
+		var file *os.File
+		if fileExists {
+			// Open file for appending
+			file, err = os.OpenFile(notesFile, os.O_APPEND|os.O_WRONLY, 0644)
+		} else {
+			// Create new file with header
+			file, err = os.Create(notesFile)
+			if err != nil {
+				return noteSavedMsg{success: false, error: "Could not create notes file"}
+			}
+			// Write header first
+			if _, err := file.WriteString("# DirPlay Track Notes\n"); err != nil {
+				file.Close()
+				return noteSavedMsg{success: false, error: "Could not write header to notes file"}
+			}
+		}
+
+		if err != nil {
+			return noteSavedMsg{success: false, error: "Could not open notes file"}
+		}
+		defer file.Close()
+
+		// Write the note entry
+		if _, err := file.WriteString(noteEntry); err != nil {
+			return noteSavedMsg{success: false, error: "Could not write to notes file"}
+		}
+
+		return noteSavedMsg{success: true}
 	}
 }
 
