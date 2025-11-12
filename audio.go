@@ -183,6 +183,7 @@ func (ap *AudioPlayer) Pause() {
 	if ap.ctrl != nil && ap.playing {
 		speaker.Lock()
 		ap.ctrl.Paused = true
+		ap.currentPos += time.Since(ap.startTime) // Capture position at pause
 		speaker.Unlock()
 	}
 }
@@ -192,6 +193,7 @@ func (ap *AudioPlayer) Resume() {
 	if ap.ctrl != nil && ap.playing {
 		speaker.Lock()
 		ap.ctrl.Paused = false
+		ap.startTime = time.Now() // Reset start time on resume
 		speaker.Unlock()
 	}
 }
@@ -264,7 +266,14 @@ func (ap *AudioPlayer) GetDuration() time.Duration {
 
 // GetPosition returns the current playback position
 func (ap *AudioPlayer) GetPosition() time.Duration {
-	if !ap.playing || ap.IsPaused() {
+	speaker.Lock()
+	defer speaker.Unlock()
+
+	if ap.ctrl != nil && ap.ctrl.Paused {
+		return ap.currentPos
+	}
+
+	if !ap.playing {
 		return ap.currentPos
 	}
 
